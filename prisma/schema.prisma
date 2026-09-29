@@ -6,3 +6,336 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum UserRole {
+  ADMIN
+  OPERATIONS
+  FINANCE
+  TECHNICIAN
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  auditLogs AuditLog[]
+
+  users User[]
+  serviceJobs ServiceJob[]
+
+  @@map("organizations")
+}
+
+model User {
+  id    String   @id @default(cuid())
+  name  String
+  email String   @unique
+  role  UserRole @default(TECHNICIAN)
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  emailVerified Boolean @default(false)
+  image         String?
+
+  sessions Session[]
+  accounts Account[]
+
+  createdJobs ServiceJob[] @relation("CreatedJobs")
+jobAssignments Assignment[] @relation("JobAssignments")
+
+submittedEvidence Evidence[] @relation("SubmittedEvidence")
+evidenceReviews EvidenceVerification[] @relation("EvidenceReviews")
+
+paymentRequests PaymentRequest[] @relation("PaymentRequestedBy")
+paymentApprovals PaymentApproval[] @relation("PaymentApprovals")
+
+auditLogs AuditLog[]
+
+  @@index([organizationId])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id         String @id
+  accountId  String
+  providerId String
+  userId     String
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+enum ServiceJobStatus {
+  DRAFT
+  ASSIGNED
+  IN_PROGRESS
+  EVIDENCE_SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  CORRECTION_REQUIRED
+  PAYMENT_PENDING
+  PAID
+  CANCELLED
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model ServiceJob {
+  id          String          @id @default(cuid())
+  title       String
+  description String?
+  location    String?
+  status      ServiceJobStatus @default(DRAFT)
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdById String
+  createdBy   User @relation("CreatedJobs", fields: [createdById], references: [id])
+
+  assignments Assignment[]
+  evidence Evidence[]
+
+  paymentRequests PaymentRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([createdById])
+  @@index([status])
+  @@map("service_jobs")
+}
+
+model Assignment {
+  id String @id @default(cuid())
+
+  serviceJobId String
+  serviceJob   ServiceJob @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
+
+  technicianId String
+  technician   User @relation("JobAssignments", fields: [technicianId], references: [id])
+
+  status AssignmentStatus @default(ASSIGNED)
+
+  assignedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([serviceJobId, technicianId])
+  @@index([technicianId])
+  @@map("assignments")
+}
+enum EvidenceType {
+  PHOTO
+  DOCUMENT
+  COMPLETION_NOTE
+}
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CORRECTION_REQUIRED
+}
+model Evidence {
+  id String @id @default(cuid())
+
+  serviceJobId String
+  serviceJob   ServiceJob @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
+
+  submittedById String
+  submittedBy   User @relation("SubmittedEvidence", fields: [submittedById], references: [id])
+
+  type EvidenceType
+
+  fileUrl  String?
+  fileName String?
+  notes    String?
+
+  verifications EvidenceVerification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([serviceJobId])
+  @@index([submittedById])
+  @@map("evidence")
+}
+model EvidenceVerification {
+  id String @id @default(cuid())
+
+  evidenceId String
+  evidence   Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  reviewedById String
+  reviewedBy   User @relation("EvidenceReviews", fields: [reviewedById], references: [id])
+
+  status VerificationStatus @default(PENDING)
+  comments String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([evidenceId])
+  @@index([reviewedById])
+  @@map("evidence_verifications")
+}
+enum PaymentRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+}
+enum PaymentApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+model PaymentRequest {
+  id String @id @default(cuid())
+
+  serviceJobId String
+  serviceJob   ServiceJob @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
+
+  requestedById String
+  requestedBy   User @relation("PaymentRequestedBy", fields: [requestedById], references: [id])
+
+  amount Decimal @db.Decimal(12, 2)
+  currency String @default("PKR")
+
+  description String?
+
+  status PaymentRequestStatus @default(PENDING)
+
+  paymentReference String?
+
+  requestedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  approvals PaymentApproval[]
+
+  @@index([serviceJobId])
+  @@index([requestedById])
+  @@index([status])
+  @@map("payment_requests")
+}
+model PaymentApproval {
+  id String @id @default(cuid())
+
+  paymentRequestId String
+  paymentRequest   PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+
+  reviewedById String
+  reviewedBy   User @relation("PaymentApprovals", fields: [reviewedById], references: [id])
+
+  status PaymentApprovalStatus @default(PENDING)
+
+  comments String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([paymentRequestId])
+  @@index([reviewedById])
+  @@map("payment_approvals")
+}
+enum AuditAction {
+  JOB_CREATED
+  JOB_ASSIGNED
+  JOB_UPDATED
+  JOB_STATUS_CHANGED
+
+  EVIDENCE_SUBMITTED
+  EVIDENCE_APPROVED
+  EVIDENCE_REJECTED
+  EVIDENCE_CORRECTION_REQUIRED
+
+  PAYMENT_REQUESTED
+  PAYMENT_APPROVED
+  PAYMENT_REJECTED
+  PAYMENT_PROCESSING
+  PAYMENT_PAID
+}
+model AuditLog {
+  id String @id @default(cuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  action AuditAction
+
+  entityType String
+  entityId   String
+
+  description String
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([action])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+
+  @@map("audit_logs")
+}
